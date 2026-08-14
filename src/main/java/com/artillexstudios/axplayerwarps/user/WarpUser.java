@@ -8,6 +8,7 @@ import com.artillexstudios.axplayerwarps.sorting.Sort;
 import com.artillexstudios.axplayerwarps.sorting.SortingManager;
 import com.artillexstudios.axplayerwarps.warps.Warp;
 import org.apache.commons.collections4.queue.CircularFifoQueue;
+import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.bukkit.permissions.PermissionAttachmentInfo;
@@ -78,15 +79,37 @@ public class WarpUser {
     }
 
     public int getWarpLimit() {
-        if (hasBypass(player)) return Integer.MAX_VALUE;
-        int am = player.hasPermission("axplayerwarps.warps.1") ? 1 : 0;
+        boolean bypass = hasBypass(player);
+        Bukkit.getLogger().info("[AxPlayerWarps] [debug] getWarpLimit() for " + player.getName()
+                + " - op=" + player.isOp()
+                + " hasStar=" + player.hasPermission("*")
+                + " hasWarpsStar=" + player.hasPermission("axplayerwarps.warps.*")
+                + " bypass=" + bypass);
+        if (bypass) return Integer.MAX_VALUE;
+
+        boolean hasWarps1 = player.hasPermission("axplayerwarps.warps.1");
+        int am = hasWarps1 ? 1 : 0;
+        Bukkit.getLogger().info("[AxPlayerWarps] [debug] hasPermission(axplayerwarps.warps.1)=" + hasWarps1 + ", starting am=" + am);
+
+        Bukkit.getLogger().info("[AxPlayerWarps] [debug] scanning effective permissions matching axplayerwarps.warps.*");
         for (PermissionAttachmentInfo pai : player.getEffectivePermissions()) {
-            if (!pai.getValue()) continue;
             if (!pai.getPermission().startsWith("axplayerwarps.warps.")) continue;
 
-            int value = Integer.parseInt(pai.getPermission().substring(pai.getPermission().lastIndexOf('.') + 1));
-            if (value > am) am = value;
+            Bukkit.getLogger().info("[AxPlayerWarps] [debug]   node=" + pai.getPermission()
+                    + " value=" + pai.getValue()
+                    + " attachment=" + (pai.getAttachment() != null ? pai.getAttachment().getPlugin().getName() : "null"));
+
+            if (!pai.getValue()) continue;
+
+            try {
+                int value = Integer.parseInt(pai.getPermission().substring(pai.getPermission().lastIndexOf('.') + 1));
+                if (value > am) am = value;
+            } catch (NumberFormatException e) {
+                Bukkit.getLogger().info("[AxPlayerWarps] [debug]   skipping non-numeric node: " + pai.getPermission());
+            }
         }
+
+        Bukkit.getLogger().info("[AxPlayerWarps] [debug] final computed limit for " + player.getName() + " = " + am);
         return am;
     }
 
