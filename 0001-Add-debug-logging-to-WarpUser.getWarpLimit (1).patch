@@ -1,0 +1,72 @@
+From 9a6f83b1af3fb77ea9f73483670e50815ebd6f7f Mon Sep 17 00:00:00 2001
+From: dpembo <dave@pembo.co.uk>
+Date: Fri, 14 Aug 2026 07:05:26 +0000
+Subject: [PATCH] Add debug logging to WarpUser.getWarpLimit()
+
+Temporary [debug]-tagged log lines tracing the bypass check, the
+axplayerwarps.warps.1 default check, and every axplayerwarps.warps.*
+node Bukkit's effective permissions actually contain at call time -
+to compare against what LuckPerms itself reports via /lp permission
+check. Remove once the discrepancy is found.
+---
+ .../axplayerwarps/user/WarpUser.java          | 33 ++++++++++++++++---
+ 1 file changed, 28 insertions(+), 5 deletions(-)
+
+diff --git a/src/main/java/com/artillexstudios/axplayerwarps/user/WarpUser.java b/src/main/java/com/artillexstudios/axplayerwarps/user/WarpUser.java
+index 61e88c2..2c655c8 100644
+--- a/src/main/java/com/artillexstudios/axplayerwarps/user/WarpUser.java
++++ b/src/main/java/com/artillexstudios/axplayerwarps/user/WarpUser.java
+@@ -8,6 +8,7 @@ import com.artillexstudios.axplayerwarps.sorting.Sort;
+ import com.artillexstudios.axplayerwarps.sorting.SortingManager;
+ import com.artillexstudios.axplayerwarps.warps.Warp;
+ import org.apache.commons.collections4.queue.CircularFifoQueue;
++import org.bukkit.Bukkit;
+ import org.bukkit.OfflinePlayer;
+ import org.bukkit.entity.Player;
+ import org.bukkit.permissions.PermissionAttachmentInfo;
+@@ -78,15 +79,37 @@ public class WarpUser {
+     }
+ 
+     public int getWarpLimit() {
+-        if (hasBypass(player)) return Integer.MAX_VALUE;
+-        int am = player.hasPermission("axplayerwarps.warps.1") ? 1 : 0;
++        boolean bypass = hasBypass(player);
++        Bukkit.getLogger().info("[AxPlayerWarps] [debug] getWarpLimit() for " + player.getName()
++                + " - op=" + player.isOp()
++                + " hasStar=" + player.hasPermission("*")
++                + " hasWarpsStar=" + player.hasPermission("axplayerwarps.warps.*")
++                + " bypass=" + bypass);
++        if (bypass) return Integer.MAX_VALUE;
++
++        boolean hasWarps1 = player.hasPermission("axplayerwarps.warps.1");
++        int am = hasWarps1 ? 1 : 0;
++        Bukkit.getLogger().info("[AxPlayerWarps] [debug] hasPermission(axplayerwarps.warps.1)=" + hasWarps1 + ", starting am=" + am);
++
++        Bukkit.getLogger().info("[AxPlayerWarps] [debug] scanning effective permissions matching axplayerwarps.warps.*");
+         for (PermissionAttachmentInfo pai : player.getEffectivePermissions()) {
+-            if (!pai.getValue()) continue;
+             if (!pai.getPermission().startsWith("axplayerwarps.warps.")) continue;
+ 
+-            int value = Integer.parseInt(pai.getPermission().substring(pai.getPermission().lastIndexOf('.') + 1));
+-            if (value > am) am = value;
++            Bukkit.getLogger().info("[AxPlayerWarps] [debug]   node=" + pai.getPermission()
++                    + " value=" + pai.getValue()
++                    + " attachment=" + (pai.getAttachment() != null ? pai.getAttachment().getPlugin().getName() : "null"));
++
++            if (!pai.getValue()) continue;
++
++            try {
++                int value = Integer.parseInt(pai.getPermission().substring(pai.getPermission().lastIndexOf('.') + 1));
++                if (value > am) am = value;
++            } catch (NumberFormatException e) {
++                Bukkit.getLogger().info("[AxPlayerWarps] [debug]   skipping non-numeric node: " + pai.getPermission());
++            }
+         }
++
++        Bukkit.getLogger().info("[AxPlayerWarps] [debug] final computed limit for " + player.getName() + " = " + am);
+         return am;
+     }
+ 
+-- 
+2.43.0
+
