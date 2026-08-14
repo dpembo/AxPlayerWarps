@@ -17,16 +17,33 @@ import static com.artillexstudios.axplayerwarps.AxPlayerWarps.CONFIG;
 public class LuckPermsListener {
 
     public static void register() {
-        if (Bukkit.getPluginManager().getPlugin("LuckPerms") == null) return;
-        if (!CONFIG.getBoolean("warp-limit-enforcement.enabled", true)) return;
+        if (Bukkit.getPluginManager().getPlugin("LuckPerms") == null) {
+            Bukkit.getLogger().info("[AxPlayerWarps] [debug] LuckPerms not found, skipping hook registration");
+            return;
+        }
+        if (!CONFIG.getBoolean("warp-limit-enforcement.enabled", true)) {
+            Bukkit.getLogger().info("[AxPlayerWarps] [debug] warp-limit-enforcement.enabled is false, skipping hook registration");
+            return;
+        }
 
         LuckPerms luckPerms = LuckPermsProvider.get();
         luckPerms.getEventBus().subscribe(AxPlayerWarps.getInstance(), UserDataRecalculateEvent.class, event -> {
+            Bukkit.getLogger().info("[AxPlayerWarps] [debug] UserDataRecalculateEvent fired for " + event.getUser().getUsername() + " (" + event.getUser().getUniqueId() + ")");
+
             Player player = Bukkit.getPlayer(event.getUser().getUniqueId());
-            if (player == null) return; // offline - caught by the join check instead
+            if (player == null) {
+                Bukkit.getLogger().info("[AxPlayerWarps] [debug] player is offline, skipping (join check will catch it)");
+                return;
+            }
 
             // give Bukkit's permission attachments a tick to catch up with LuckPerms' own cache
-            Bukkit.getScheduler().runTask(AxPlayerWarps.getInstance(), () -> WarpLimitEnforcer.enforce(player));
+            Bukkit.getScheduler().runTask(AxPlayerWarps.getInstance(), () -> {
+                Bukkit.getLogger().info("[AxPlayerWarps] [debug] running WarpLimitEnforcer.enforce() for " + player.getName());
+                WarpLimitEnforcer.enforce(player);
+            });
         });
+
+        Bukkit.getLogger().info("[AxPlayerWarps] [debug] LuckPerms hook registered");
     }
 }
+
