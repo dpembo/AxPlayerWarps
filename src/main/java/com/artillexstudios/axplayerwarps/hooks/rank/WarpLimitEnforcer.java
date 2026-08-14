@@ -4,7 +4,6 @@ import com.artillexstudios.axplayerwarps.user.Users;
 import com.artillexstudios.axplayerwarps.user.WarpUser;
 import com.artillexstudios.axplayerwarps.warps.Warp;
 import com.artillexstudios.axplayerwarps.warps.WarpManager;
-import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
 import java.util.Comparator;
@@ -25,10 +24,7 @@ import static com.artillexstudios.axplayerwarps.AxPlayerWarps.MESSAGEUTILS;
 public class WarpLimitEnforcer {
 
     public static void enforce(Player player) {
-        if (!CONFIG.getBoolean("warp-limit-enforcement.enabled", true)) {
-            Bukkit.getLogger().info("[AxPlayerWarps] [debug] enforcement disabled in config, skipping " + player.getName());
-            return;
-        }
+        if (!CONFIG.getBoolean("warp-limit-enforcement.enabled", true)) return;
 
         WarpUser user = Users.get(player);
         int limit = user.getWarpLimit();
@@ -39,18 +35,11 @@ public class WarpLimitEnforcer {
                 .sorted(Comparator.comparingLong(Warp::getCreated).reversed())
                 .toList();
 
-        Bukkit.getLogger().info("[AxPlayerWarps] [debug] " + player.getName() + " owns " + owned.size() + " warp(s), computed limit=" + limit);
-
-        if (owned.size() <= limit) {
-            Bukkit.getLogger().info("[AxPlayerWarps] [debug] " + player.getName() + " is within limit, nothing to do");
-            return;
-        }
+        if (owned.size() <= limit) return;
 
         int excess = owned.size() - limit;
         List<Warp> toRemove = owned.subList(0, excess);
         String names = toRemove.stream().map(Warp::getName).collect(Collectors.joining(", "));
-
-        Bukkit.getLogger().info("[AxPlayerWarps] [debug] " + player.getName() + " is over limit by " + excess + ", removing: " + names);
 
         MESSAGEUTILS.sendLang(player, "limit-enforcement.warps-removed", Map.of(
                 "%limit%", "" + limit,
@@ -64,4 +53,3 @@ public class WarpLimitEnforcer {
         }
     }
 }
-

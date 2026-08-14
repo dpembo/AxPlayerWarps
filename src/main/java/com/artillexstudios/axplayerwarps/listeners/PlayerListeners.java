@@ -25,7 +25,6 @@ public class PlayerListeners implements Listener {
         Users.get(event.getPlayer());
 
         if (CONFIG.getBoolean("warp-limit-enforcement.check-on-join", true)) {
-            Bukkit.getLogger().info("[AxPlayerWarps] [debug] running join-time WarpLimitEnforcer.enforce() for " + event.getPlayer().getName());
             Bukkit.getScheduler().runTask(AxPlayerWarps.getInstance(),
                     () -> WarpLimitEnforcer.enforce(event.getPlayer()));
         }
