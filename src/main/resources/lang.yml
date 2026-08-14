@@ -141,6 +141,9 @@ errors:
   nothing-withdrawable: "&#FF4444There is no money to be withdrawn!"
   not-your-warp: "&#FF4444This is not your warp!"
 
+limit-enforcement:
+  warps-removed: "&#FF4444Your rank changed and you're only entitled to &#EE0000%limit% &#FF4444warp(s) now, so we removed your &#EE0000%removed% &#FF4444most recent warp(s): &#EE0000%warps%"
+
 time:
   second: "s"
   minute: "m"
