@@ -1,7 +1,7 @@
 # DOCUMENTATION: https://docs.artillex-studios.com/axplayerwarps.html
 # ITEM BUILDER: https://docs.artillex-studios.com/item-builder.html
 
-title: "&0&lAxPWarps > &8Warps (%page%/%pages%)"
+title: "&0&lPlayer Warps > &8Warps (%page%/%pages%)"
 # a gui can have 1-6 rows
 rows: 6
 # how many items should be shown on a single page?
