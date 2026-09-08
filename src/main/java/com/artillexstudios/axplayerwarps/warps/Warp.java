@@ -454,8 +454,9 @@ public class Warp {
         Bukkit.getServer().getPluginManager().callEvent(deleteEvent);
         if (deleteEvent.isCancelled()) return;
 
+        WarpManager.getWarps().remove(this);
+        MESSAGEUTILS.sendLang(player, "delete.deleted", Map.of("%warp%", getName()));
         AxPlayerWarps.getThreadedQueue().submit(() -> {
-            MESSAGEUTILS.sendLang(player, "delete.deleted", Map.of("%warp%", getName()));
             AxPlayerWarps.getDatabase().deleteWarp(this);
         });
     }

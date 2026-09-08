@@ -1,7 +1,7 @@
 # DOCUMENTATION: https://docs.artillex-studios.com/axplayerwarps.html
 # ITEM BUILDER: https://docs.artillex-studios.com/item-builder.html
 
-title: "&0&lAxPWarps > &8Categories"
+title: "&0&lPlayer Warps > &8Categories"
 # a gui can have 1-6 rows
 rows: 6
 # should the gui auto update?

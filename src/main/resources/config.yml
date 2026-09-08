@@ -60,6 +60,15 @@ warp-creation-cost:
   # currencies are defined in the currencies.yml
   currency: Vault
 
+# When a player's warp limit shrinks (e.g. a LuckPerms rank change) and they
+# now own more warps than they're entitled to, remove the newest ones to bring
+# them back within their limit. Their oldest warps are always kept.
+warp-limit-enforcement:
+  enabled: true
+  # Also run the check when a player joins, to catch demotions that happened
+  # while they were offline (e.g. changed via a web panel, not /lp promote).
+  check-on-join: true
+
 warp-naming:
   # if enabled, for example "myWarp" and "mywarp" will be considered as separate warps
   case-sensitive: false
