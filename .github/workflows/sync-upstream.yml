@@ -1,0 +1,216 @@
+name: Sync from upstream
+
+# Pulls the latest Artillex-Studios/AxPlayerWarps into a fresh branch, then
+# re-applies the fork's own changes (everything on BASE_BRANCH that upstream
+# doesn't have) on top via format-patch / am.
+#
+# Optionally builds the result with Maven, and optionally promotes it to
+# BASE_BRANCH.
+#
+# Secret (REQUIRED once this workflow file is committed to the fork):
+#   SYNC_TOKEN = a PAT with "repo" + "workflow" scope.
+#   The sync branch re-creates your commits, including the one that adds this
+#   workflow file, and the default GITHUB_TOKEN is not allowed to push commits
+#   that add or modify .github/workflows/*.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"          # Mondays 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Re-create the sync branch even if it already exists"
+        type: boolean
+        default: false
+      skip_build:
+        description: "Skip the verification build"
+        type: boolean
+        default: false
+      promote:
+        description: "After a good build, force-reset BASE_BRANCH to the sync branch"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: Artillex-Studios/AxPlayerWarps
+  UPSTREAM_BRANCH: main
+  BASE_BRANCH: main               # your fork's main branch
+  BRANCH_PREFIX: sync/upstream-   # branch = prefix + short upstream sha
+  SQUASH_FORK_COMMITS: "false"    # "true" = collapse all your commits into one
+                                  # (conflicts get resolved once, not per commit)
+  AUTO_PROMOTE: "false"           # "true" = scheduled runs also reset BASE_BRANCH
+  JAVA_VERSION: "21"
+  BUILD_CMD: "mvn -B -ntp clean package"
+  JAR_GLOB: "target/*.jar"
+  GIT_NAME: "dpembo"
+  GIT_EMAIL: "dpembo@users.noreply.github.com"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Prepare sync branch
+        id: prepare
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          git config user.name  "$GIT_NAME"
+          git config user.email "$GIT_EMAIL"
+
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch --no-tags upstream "$UPSTREAM_BRANCH"
+          git fetch --no-tags origin   "$BASE_BRANCH"
+
+          UP_REF="upstream/${UPSTREAM_BRANCH}"
+          BASE_REF="origin/${BASE_BRANCH}"
+          UP_SHA="$(git rev-parse --short=10 "$UP_REF")"
+          BRANCH="${BRANCH_PREFIX}${UP_SHA}"
+
+          {
+            echo "branch=$BRANCH"
+            echo "up_sha=$UP_SHA"
+            echo "base_sha=$(git rev-parse "$BASE_REF")"
+            echo "skip=false"
+            echo "conflict=false"
+          } >> "$GITHUB_OUTPUT"
+
+          # Already contains everything upstream has -> nothing to do
+          if git merge-base --is-ancestor "$UP_REF" "$BASE_REF"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=$BASE_BRANCH already contains upstream $UP_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Branch for this upstream commit already exists
+          if [[ "${FORCE:-}" != "true" ]] && git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=$BRANCH already exists (run with force to recreate)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Fork-only changes = everything on BASE not reachable from upstream
+          PATCH_DIR="$RUNNER_TEMP/patches"
+          mkdir -p "$PATCH_DIR"
+          if [[ "$SQUASH_FORK_COMMITS" == "true" ]]; then
+            git diff --binary "$UP_REF...$BASE_REF" > "$PATCH_DIR/fork-changes.diff"
+            if [[ -s "$PATCH_DIR/fork-changes.diff" ]]; then COUNT=1; else COUNT=0; fi
+          else
+            git format-patch --no-merges --output-directory "$PATCH_DIR" "$UP_REF..$BASE_REF"
+            COUNT="$(find "$PATCH_DIR" -name '*.patch' | wc -l)"
+          fi
+          echo "patch_dir=$PATCH_DIR" >> "$GITHUB_OUTPUT"
+          echo "patch_count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Fork changes to re-apply: $COUNT"
+
+          git checkout -B "$BRANCH" "$UP_REF"
+
+          if [[ "$COUNT" -gt 0 ]]; then
+            if [[ "$SQUASH_FORK_COMMITS" == "true" ]]; then
+              if git apply --3way --index "$PATCH_DIR/fork-changes.diff"; then
+                git commit -m "Fork changes on top of upstream ${UP_SHA}"
+              else
+                git reset --hard
+                echo "conflict=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            else
+              if ! git am --3way "$PATCH_DIR"/*.patch; then
+                git am --abort || true
+                echo "conflict=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+          fi
+
+      - name: Upload patches on conflict
+        if: steps.prepare.outputs.conflict == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fork-patches
+          path: ${{ steps.prepare.outputs.patch_dir }}
+
+      - name: Report conflict
+        if: steps.prepare.outputs.conflict == 'true'
+        run: |
+          {
+            echo "### Sync failed: patch conflict"
+            echo "Upstream \`${{ steps.prepare.outputs.up_sha }}\` no longer applies cleanly with your changes."
+            echo "Download the \`fork-patches\` artifact, then locally:"
+            echo '```'
+            echo "git checkout -B ${{ steps.prepare.outputs.branch }} upstream/${UPSTREAM_BRANCH}"
+            echo "git am --3way *.patch   # or: git apply --3way fork-changes.diff"
+            echo "# fix conflicts, git am --continue"
+            echo "git push origin ${{ steps.prepare.outputs.branch }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Nothing to do
+        if: steps.prepare.outputs.skip == 'true'
+        run: echo "### Up to date - ${{ steps.prepare.outputs.reason }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push sync branch
+        if: steps.prepare.outputs.skip != 'true' && steps.prepare.outputs.conflict != 'true'
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          FLAG=""
+          [[ "${FORCE:-}" == "true" ]] && FLAG="--force"
+          git push $FLAG origin "${{ steps.prepare.outputs.branch }}"
+
+      - name: Set up Java + Maven cache
+        if: steps.prepare.outputs.skip != 'true' && steps.prepare.outputs.conflict != 'true' && !inputs.skip_build
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Verify build
+        if: steps.prepare.outputs.skip != 'true' && steps.prepare.outputs.conflict != 'true' && !inputs.skip_build
+        run: ${{ env.BUILD_CMD }}
+
+      - name: Upload jar
+        if: steps.prepare.outputs.skip != 'true' && steps.prepare.outputs.conflict != 'true' && !inputs.skip_build
+        uses: actions/upload-artifact@v4
+        with:
+          name: AxPlayerWarps-${{ steps.prepare.outputs.up_sha }}
+          path: |
+            ${{ env.JAR_GLOB }}
+            !target/original-*.jar
+            !target/*-sources.jar
+            !target/*-javadoc.jar
+          if-no-files-found: warn
+
+      - name: Promote to base branch
+        if: steps.prepare.outputs.skip != 'true' && steps.prepare.outputs.conflict != 'true' && (inputs.promote || env.AUTO_PROMOTE == 'true')
+        run: |
+          set -euo pipefail
+          git push \
+            --force-with-lease="${BASE_BRANCH}:${{ steps.prepare.outputs.base_sha }}" \
+            origin "HEAD:refs/heads/${BASE_BRANCH}"
+
+      - name: Summary
+        if: steps.prepare.outputs.skip != 'true' && steps.prepare.outputs.conflict != 'true'
+        run: |
+          {
+            echo "### Synced to upstream \`${{ steps.prepare.outputs.up_sha }}\`"
+            echo "- Branch: \`${{ steps.prepare.outputs.branch }}\`"
+            echo "- Fork changes re-applied: ${{ steps.prepare.outputs.patch_count }} (squash: ${SQUASH_FORK_COMMITS})"
+            echo "- Promoted to \`${BASE_BRANCH}\`: ${{ (inputs.promote || env.AUTO_PROMOTE == 'true') && 'yes' || 'no' }}"
+          } >> "$GITHUB_STEP_SUMMARY"
