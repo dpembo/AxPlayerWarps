@@ -49,7 +49,15 @@ env:
   POM_FILE: "pom.xml"
   POM_REMOVE_ARTIFACTS: "MobCoins" # comma-separated artifactIds to comment out of the pom
                                   # after every sync ("" = off). While set, pom.xml is
-                                  # taken from upstream and your own pom edits are NOT replayed.
+                                  # taken from upstream and your own pom edits are NOT replayed
+                                  # (put them in POM_ADD_DEPENDENCIES / POM_REMOVE_ARTIFACTS instead).
+  POM_ADD_DEPENDENCIES: |         # full <dependency> blocks to add if the artifactId isn't already live in the pom
+    <dependency>
+        <groupId>net.luckperms</groupId>
+        <artifactId>api</artifactId>
+        <version>5.5</version>
+        <scope>provided</scope>
+    </dependency>
   JAVA_VERSION: "21"
   BUILD_CMD: "mvn -B -ntp clean package"
   JAR_GLOB: "target/*.jar"
@@ -111,7 +119,7 @@ jobs:
           mkdir -p "$PATCH_DIR"
           # pom.xml is managed by the "Apply fork tweaks" step, so don't replay it
           PATHSPEC=()
-          if [[ -n "$POM_REMOVE_ARTIFACTS" ]]; then
+          if [[ -n "$POM_REMOVE_ARTIFACTS" || -n "${POM_ADD_DEPENDENCIES//[[:space:]]/}" ]]; then
             PATHSPEC=(-- . ":(exclude)$POM_FILE")
           fi
           if [[ "$SQUASH_FORK_COMMITS" == "true" ]]; then
@@ -172,46 +180,74 @@ jobs:
         if: steps.prepare.outputs.skip == 'true'
         run: echo "### Up to date - ${{ steps.prepare.outputs.reason }}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Apply fork tweaks (comment out pom dependencies)
-        if: steps.prepare.outputs.skip != 'true' && steps.prepare.outputs.conflict != 'true' && env.POM_REMOVE_ARTIFACTS != ''
+      - name: Apply fork tweaks (pom dependencies)
+        if: steps.prepare.outputs.skip != 'true' && steps.prepare.outputs.conflict != 'true' && (env.POM_REMOVE_ARTIFACTS != '' || env.POM_ADD_DEPENDENCIES != '')
         run: |
           set -euo pipefail
           python3 - "$POM_FILE" "$POM_REMOVE_ARTIFACTS" << 'PY'
           import os, re, sys, tempfile
 
-          path, wanted = sys.argv[1], {a.strip() for a in sys.argv[2].split(",") if a.strip()}
+          path = sys.argv[1]
+          wanted = {a.strip() for a in sys.argv[2].split(",") if a.strip()}
+          to_add = os.environ.get("POM_ADD_DEPENDENCIES", "")
           text = open(path, encoding="utf-8").read()
 
           dep = re.compile(r"<dependency>.*?</dependency>", re.S)
-          done = []
+          commented, added = [], []
+
+          def split(t):
+              return re.split(r"(<!--.*?-->)", t, flags=re.S)
 
           def fix(m):
               block = m.group(0)
               a = re.search(r"<artifactId>\s*([^<\s]+)\s*</artifactId>", block)
               if a and a.group(1) in wanted:
-                  done.append(a.group(1))
+                  commented.append(a.group(1))
                   return "<!--" + block + "-->"
               return block
 
-          # leave anything that is already inside an XML comment alone
-          parts = re.split(r"(<!--.*?-->)", text, flags=re.S)
-          out = "".join(p if p.startswith("<!--") else dep.sub(fix, p) for p in parts)
+          # leave anything already inside an XML comment alone
+          if wanted:
+              text = "".join(p if p.startswith("<!--") else dep.sub(fix, p) for p in split(text))
 
-          if done:
+          def live_ids(t):
+              ids = set()
+              for p in split(t):
+                  if not p.startswith("<!--"):
+                      for b in dep.findall(p):
+                          a = re.search(r"<artifactId>\s*([^<\s]+)\s*</artifactId>", b)
+                          if a:
+                              ids.add(a.group(1))
+              return ids
+
+          for block in dep.findall(to_add):
+              a = re.search(r"<artifactId>\s*([^<\s]+)\s*</artifactId>", block)
+              if not a or a.group(1) in live_ids(text):
+                  continue
+              end = text.rfind("</dependencies>")
+              if end < 0:
+                  print("::warning::no </dependencies> found, cannot add " + a.group(1))
+                  continue
+              indented = "\n".join("        " + l.strip() if l.strip() else l for l in block.strip().splitlines())
+              text = text[:end].rstrip() + "\n" + indented + "\n    " + text[end:]
+              added.append(a.group(1))
+
+          if commented or added:
               st = os.stat(path)
               fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)))
               with os.fdopen(fd, "w", encoding="utf-8") as f:
-                  f.write(out)
+                  f.write(text)
               os.chmod(tmp, st.st_mode & 0o7777)
               os.replace(tmp, path)
-              print("Commented out:", ", ".join(done))
+              print("Commented out:", ", ".join(commented) or "-")
+              print("Added:", ", ".join(added) or "-")
           else:
-              print("::warning::No live <dependency> matched " + ", ".join(sorted(wanted)) + " (already commented, or removed upstream)")
+              print("::warning::pom tweaks matched nothing (already applied, or changed upstream)")
           PY
 
           if ! git diff --quiet -- "$POM_FILE"; then
             git add "$POM_FILE"
-            git commit -m "Fork: comment out pom dependencies (${POM_REMOVE_ARTIFACTS})"
+            git commit -m "Fork: adjust pom dependencies (remove: ${POM_REMOVE_ARTIFACTS:-none}; add: see workflow)"
           fi
 
       - name: Push sync branch
