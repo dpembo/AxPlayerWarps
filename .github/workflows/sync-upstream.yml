@@ -46,6 +46,10 @@ env:
   SQUASH_FORK_COMMITS: "false"    # "true" = collapse all your commits into one
                                   # (conflicts get resolved once, not per commit)
   AUTO_PROMOTE: "false"           # "true" = scheduled runs also reset BASE_BRANCH
+  POM_FILE: "pom.xml"
+  POM_REMOVE_ARTIFACTS: "MobCoins" # comma-separated artifactIds to comment out of the pom
+                                  # after every sync ("" = off). While set, pom.xml is
+                                  # taken from upstream and your own pom edits are NOT replayed.
   JAVA_VERSION: "21"
   BUILD_CMD: "mvn -B -ntp clean package"
   JAR_GLOB: "target/*.jar"
@@ -105,11 +109,16 @@ jobs:
           # Fork-only changes = everything on BASE not reachable from upstream
           PATCH_DIR="$RUNNER_TEMP/patches"
           mkdir -p "$PATCH_DIR"
+          # pom.xml is managed by the "Apply fork tweaks" step, so don't replay it
+          PATHSPEC=()
+          if [[ -n "$POM_REMOVE_ARTIFACTS" ]]; then
+            PATHSPEC=(-- . ":(exclude)$POM_FILE")
+          fi
           if [[ "$SQUASH_FORK_COMMITS" == "true" ]]; then
-            git diff --binary "$UP_REF...$BASE_REF" > "$PATCH_DIR/fork-changes.diff"
+            git diff --binary "$UP_REF...$BASE_REF" "${PATHSPEC[@]}" > "$PATCH_DIR/fork-changes.diff"
             if [[ -s "$PATCH_DIR/fork-changes.diff" ]]; then COUNT=1; else COUNT=0; fi
           else
-            git format-patch --no-merges --output-directory "$PATCH_DIR" "$UP_REF..$BASE_REF"
+            git format-patch --no-merges --output-directory "$PATCH_DIR" "$UP_REF..$BASE_REF" "${PATHSPEC[@]}"
             COUNT="$(find "$PATCH_DIR" -name '*.patch' | wc -l)"
           fi
           echo "patch_dir=$PATCH_DIR" >> "$GITHUB_OUTPUT"
@@ -162,6 +171,48 @@ jobs:
       - name: Nothing to do
         if: steps.prepare.outputs.skip == 'true'
         run: echo "### Up to date - ${{ steps.prepare.outputs.reason }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply fork tweaks (comment out pom dependencies)
+        if: steps.prepare.outputs.skip != 'true' && steps.prepare.outputs.conflict != 'true' && env.POM_REMOVE_ARTIFACTS != ''
+        run: |
+          set -euo pipefail
+          python3 - "$POM_FILE" "$POM_REMOVE_ARTIFACTS" << 'PY'
+          import os, re, sys, tempfile
+
+          path, wanted = sys.argv[1], {a.strip() for a in sys.argv[2].split(",") if a.strip()}
+          text = open(path, encoding="utf-8").read()
+
+          dep = re.compile(r"<dependency>.*?</dependency>", re.S)
+          done = []
+
+          def fix(m):
+              block = m.group(0)
+              a = re.search(r"<artifactId>\s*([^<\s]+)\s*</artifactId>", block)
+              if a and a.group(1) in wanted:
+                  done.append(a.group(1))
+                  return "<!--" + block + "-->"
+              return block
+
+          # leave anything that is already inside an XML comment alone
+          parts = re.split(r"(<!--.*?-->)", text, flags=re.S)
+          out = "".join(p if p.startswith("<!--") else dep.sub(fix, p) for p in parts)
+
+          if done:
+              st = os.stat(path)
+              fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)))
+              with os.fdopen(fd, "w", encoding="utf-8") as f:
+                  f.write(out)
+              os.chmod(tmp, st.st_mode & 0o7777)
+              os.replace(tmp, path)
+              print("Commented out:", ", ".join(done))
+          else:
+              print("::warning::No live <dependency> matched " + ", ".join(sorted(wanted)) + " (already commented, or removed upstream)")
+          PY
+
+          if ! git diff --quiet -- "$POM_FILE"; then
+            git add "$POM_FILE"
+            git commit -m "Fork: comment out pom dependencies (${POM_REMOVE_ARTIFACTS})"
+          fi
 
       - name: Push sync branch
         if: steps.prepare.outputs.skip != 'true' && steps.prepare.outputs.conflict != 'true'
