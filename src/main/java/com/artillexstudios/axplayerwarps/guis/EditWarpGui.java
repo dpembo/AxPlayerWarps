@@ -2,7 +2,7 @@ package com.artillexstudios.axplayerwarps.guis;
 
 import com.artillexstudios.axapi.config.Config;
 import com.artillexstudios.axapi.items.WrappedItemStack;
-import com.artillexstudios.axapi.items.components.DataComponents;
+import com.artillexstudios.axapi.items.component.DataComponents;
 import com.artillexstudios.axapi.libs.boostedyaml.settings.dumper.DumperSettings;
 import com.artillexstudios.axapi.libs.boostedyaml.settings.general.GeneralSettings;
 import com.artillexstudios.axapi.libs.boostedyaml.settings.loader.LoaderSettings;
@@ -298,7 +298,7 @@ public class EditWarpGui extends GuiFrame<Gui> {
         WrappedItemStack wrap = WrappedItemStack.wrap(builder.get());
         List<String> lore = new ArrayList<>();
         String[] description = warp.getDescription().split("\n", CONFIG.getInt("warp-description.max-lines", 3));
-        for (Component line : wrap.get(DataComponents.LORE).lines()) {
+        for (Component line : wrap.get(DataComponents.lore()).lines()) {
             String serialized = StringUtils.MINI_MESSAGE.serialize(line);
             if (serialized.contains("%description%")) {
                 for (String s : description) {
